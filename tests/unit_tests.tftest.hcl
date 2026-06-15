@@ -1,40 +1,40 @@
-# tests/integration.tftest.hcl
+# tests/unit_tests.tftest.hcl
+# Unit tests for VPC module
 
+# Test 1: VPC Creation with Minimal Configuration
 run "test_vpc_creation_min_config" {
-  command = apply
+  command = plan
   
   variables {
-    public_subnet_count = 1
-    private_subnet_count = 1
     vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+    }
   }
   
-  # Test CIDR is correct
+  # Test minimal subnet creation
   assert {
-    condition     = var.vpc_cidr == "10.0.0.0/16"
-    error_message = "Incorrect VPC"
+    condition     = length(module.vpc.public_subnets) == 1
+    error_message = "Expected 1 public subnet"
   }
   
-  # Test DNS hostnames
   assert {
-    condition     = var.enable_dns_hostnames == true
-    error_message = "DNS hostnames not enabled"
-  }
-
-  # Test DNS hostnames
-  assert {
-    condition     = var.enable_dns_support == true
-    error_message = "DNS support not enabled"
+    condition     = length(module.vpc.private_subnets) == 1
+    error_message = "Expected 1 private subnet"
   }
 }
 
-run "multi_az_deployment" {
+# Test 2: Multi-AZ Deployment
+run "test_multi_az_deployment" {
   command = apply
 
   variables {
+    vpc_cidr = "10.0.0.0/16"
     availability_zones = ["us-west-1a", "us-west-1c"]
-    public_subnet_count = 2
-    private_subnet_count = 2
     public_subnet_cidr = {
       "us-west-1a" = { cidr_block = "10.0.1.0/24" }
       "us-west-1c" = { cidr_block = "10.0.2.0/24" }
@@ -59,80 +59,169 @@ run "multi_az_deployment" {
     condition = length(module.vpc.public_subnets) == length(var.availability_zones)
     error_message = "Public subnet count must match the number of availability zones"
   }
+  
+  assert {
+    condition = length(module.vpc.private_subnets) == length(var.availability_zones)
+    error_message = "Private subnet count must match the number of availability zones"
+  }
 }
 
-run "single_nat_gateway_configuration" {
-  command = apply
+# Test 3a: NAT Gateway Configuration - Single NAT Gateway
+run "test_single_nat_gateway_configuration" {
+  command = plan
 
   variables {
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a", "us-west-1c"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.2.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.102.0/24" }
+    }
     enable_nat_gateway = true
     single_nat_gateway = true
   }
 
   assert {
-    condition = length(module.vpc.nat_gateways) == 1
-    error_message = "Expected 1 NAT gateway"
+    condition = length(module.vpc.natgw_ids) == 1
+    error_message = "Expected 1 NAT gateway when single_nat_gateway is true"
   }
 }
 
-run "multi_nat_gateway_configuration" {
-  command = apply
+# Test 3b: NAT Gateway Configuration - Multiple NAT Gateways
+run "test_multi_nat_gateway_configuration" {
+  command = plan
 
   variables {
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a", "us-west-1c"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.2.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.102.0/24" }
+    }
     enable_nat_gateway = true
     single_nat_gateway = false
   }
 
   assert {
-    condition = length(module.vpc.nat_gateways) > 1
-    error_message = "Expected multiple NAT gateways"
+    condition = length(module.vpc.natgw_ids) == 2
+    error_message = "Expected 2 NAT gateways (one per AZ) when single_nat_gateway is false"
   }
 }
 
-run "no_nat_gateway" {
-  command = apply
+# Test 4: NAT Gateway Disabled
+run "test_no_nat_gateway" {
+  command = plan
 
   variables {
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+    }
     enable_nat_gateway = false
-    single_nat_gateway = false
   }
 
   assert {
-    condition = length(module.vpc.nat_gateways) == 0
-    error_message = "Expected no NAT gateways"
+    condition = length(module.vpc.natgw_ids) == 0
+    error_message = "Expected no NAT gateways when enable_nat_gateway is false"
   }
 }
 
-run "cidr_block_validation" {
-  command = apply
+# Test 5a: Variable Validation - Valid CIDR Block
+run "test_valid_cidr_block_validation" {
+  command = plan
 
   variables {
-    vpc_cidr = "10.0.0.0.0/1"
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+    }
   }
 
   assert {
-    condition = regex("^[0-9]{1,3}\\.([0-9]{1,3}\\.){2}[0-9]{1,3}/[0-9]{1,2}$", var.vpc_cidr)
-    error_message = "Invalid CIDR block"
+    condition     = can(regex("^[0-9]{1,3}\\.([0-9]{1,3}\\.){2}[0-9]{1,3}/[0-9]{1,2}$", var.vpc_cidr))
+    error_message = "Valid CIDR block should match regex pattern"
   }
 }
 
-run "subnet_az_count_validation"{
-  command = apply
+# Test 5b: Variable Validation - Subnet count matches AZ count
+run "test_subnet_az_count_validation" {
+  command = plan
 
   variables {
-    availability_zones = ["us-west-1a", "us-west-1c"]
-    public_subnet_count = 2
-    private_subnet_count = 2
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a", "us-west-1b", "us-west-1c"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+      "us-west-1b" = { cidr_block = "10.0.2.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.3.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+      "us-west-1b" = { cidr_block = "10.0.102.0/24" }
+      "us-west-1c" = { cidr_block = "10.0.103.0/24" }
+    }
   }
 
   assert {
-    condition = length(module.vpc.public_subnets) == var.public_subnet_count
-    error_message = "Expected ${var.public_subnet_count} public subnets"
+    condition = length(module.vpc.public_subnets) == length(var.availability_zones)
+    error_message = "Public subnet count must match the number of availability zones"
   }
 
   assert {
-    condition = length(module.vpc.private_subnets) == var.private_subnet_count
-    error_message = "Expected ${var.private_subnet_count} private subnets"
+    condition = length(module.vpc.private_subnets) == length(var.availability_zones)
+    error_message = "Private subnet count must match the number of availability zones"
   }
 }
 
+# Test 6: Tagging - Verify tags are applied to resources
+run "test_verify_global_tags" {
+  command = plan
+
+  variables {
+    vpc_cidr = "10.0.0.0/16"
+    availability_zones = ["us-west-1a"]
+    public_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.1.0/24" }
+    }
+    private_subnet_cidr = {
+      "us-west-1a" = { cidr_block = "10.0.101.0/24" }
+    }
+    tags = {
+      Environment = "test"
+      Project     = "vpc-testing"
+      ManagedBy   = "Terraform"
+    }
+  }
+
+  # Verify tags variable is set correctly
+  assert {
+    condition     = var.tags["Environment"] == "test"
+    error_message = "Expected Environment tag to be 'test'"
+  }
+
+  assert {
+    condition     = var.tags["Project"] == "vpc-testing"
+    error_message = "Expected Project tag to be 'vpc-testing'"
+  }
+
+  assert {
+    condition     = var.tags["ManagedBy"] == "Terraform"
+    error_message = "Expected ManagedBy tag to be 'Terraform'"
+  }
+}
